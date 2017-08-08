@@ -1,0 +1,224 @@
+---
+title: "Evaluating Model Performance with Caret"
+author: "Jens Hooge"
+date: "23.7.2015"
+output: pdf_document
+---
+
+First we will load the required libraries including caret and a benchmark data set. In particular we will have a look at the Wisconsin Breast Cancer Database. Our goal will be to use the features in this dataset to classify benign and malignant breast cancer tumors.
+
+```{r, echo=TRUE, message=FALSE}
+library(caret)
+library(doMC)
+library(mlbench)
+library(pROC)
+
+data(BreastCancer)
+```
+
+Then some renaming of the features to avoid readability issues. (Just ignore that)
+
+```{r, echo=TRUE}
+colnames(BreastCancer) <- c("Id", "CellThickness", "CellSize", "CellShape", 
+                            "MarginalAdhesion", "EpithelialCellSize", "BareNuclei",
+                            "BlandChromatin", "NormalNucleoli", "Mitoses", "Class")
+BreastCancer$CellThickness <- as.numeric(as.character(BreastCancer$CellThickness))
+BreastCancer$CellSize <- as.numeric(as.character(BreastCancer$CellSize))
+BreastCancer$CellShape <- as.numeric(as.character(BreastCancer$CellShape))
+BreastCancer$MarginalAdhesion <- as.numeric(as.character(BreastCancer$MarginalAdhesion))
+BreastCancer$EpithelialCellSize <- as.numeric(as.character(BreastCancer$EpithelialCellSize))
+BreastCancer$BareNuclei <- as.numeric(as.character(BreastCancer$BareNuclei))
+BreastCancer$BlandChromatin <- as.numeric(as.character(BreastCancer$BlandChromatin))
+BreastCancer$NormalNucleoli <- as.numeric(as.character(BreastCancer$NormalNucleoli))
+BreastCancer$Mitoses <- as.numeric(as.character(BreastCancer$Mitoses))
+```
+
+Let's have a first glimpse at the data, to get an idea what it is about.
+
+```{r, echo=TRUE}
+str(BreastCancer)
+```
+
+Alright, so we have 699 Samples and 11 features (aka variables or predictors). Perfect for a Machine Learning application. Guess, why I chose this dataset ;)
+
+```{r, echo=TRUE}
+summary(BreastCancer)
+```
+
+The first thing we see in the summary statistic of the dataset, is that we have samples from 458 benign and 241 malignant breast cancer tumors, and that each of the samples is labled by its class. So we are faced with a supervised binary classifcation problem. On a closer look each of the features shows a different mean and also varies on different scales. This can be problematic as it might lead to numerical instabilities for some models. The solution to that is to center and scale each of the features, such that they all have mean zero and a variance of one. We can also see that the BareNuclei feature has a few missing values, but other than just removing these samples we can impute these values, but before we start let's split our original dataset in a training and test dataset.
+
+```{r, echo=TRUE}
+set.seed(42) ## Seed for reproducibility
+
+X     <- BreastCancer[, 2:10] ## feature matrix
+Y     <- BreastCancer$Class  ## label vector
+
+classes      <- Y
+trainRows    <- createDataPartition(classes, p=.80, list=FALSE) 
+trainData    <- X[trainRows, ]
+testData     <- X[-trainRows, ]
+trainClasses <- classes[trainRows]
+testClasses  <- classes[-trainRows]
+```
+
+The createDataPartition returns the indices of the samples that should be used for training. In this case we will use 80% of the samples for training and 20% for testing the performance. The split of the original dataset can be achieved by just selecting the rows from the original dataset, which are defined by these indices. We do the same for our label vector and we got our input for the models we want to train.
+
+In particular we will train three different classification model types, k-nearest neighbor, Naive Bayes and a Support Vector Machine with a linear kernel. Each of those models have different parameters, we'll have to tune using a grid search algorithm. So let's define the parameter grid for each of these models.
+
+```{r, echo=TRUE}
+tuneGrids <- list(
+  knn  = expand.grid(k=1:20),
+  nb   = expand.grid(usekernel=TRUE, fL=seq(from=0, to=100, length=11)),
+  svm  = expand.grid(C=seq(1, 10, length=11)))
+tuneGrids$svm
+```
+
+Then we define how the models should be trained, e.g. which validation strategy we want to use, what performance metric will be used for model selection, whether the class probabilities should be returned and whether we want to run our training in parallel on multiple CPUs. Yes we do, so let's reserve a few workers on our cluster as well.
+
+```{r, echo=TRUE}
+registerDoMC(16)
+
+ctrl <- trainControl(
+  method = "repeatedcv", ## k-fold Cross Validation
+  number  = 5,           ## Number of folds
+  repeats = 10,          ## Number of repetitions for statistical stability
+  summaryFunction = twoClassSummary, ## Return model performance for binary classification
+  savePredictions = TRUE,
+  classProbs = TRUE,     ## Return class probabilities as well
+  allowParallel = TRUE   ## Use multiple CPUs  
+)
+```
+
+Alright, let's get this show on the road and train our models using the settings above and store the result of each of them in a named list.
+
+```{r, echo=TRUE, message=FALSE}
+set.seed(42)       ## Seed for reproducibility
+ptm <- proc.time() ## Measure the training time 
+
+models <- list(knn=train(trainData, trainClasses, 
+                         method = "knn",
+                         metric = "ROC",
+                         tuneGrid = tuneGrids$knn,
+                         preProcess = c("knnImpute","center", "scale"), 
+                         trControl = ctrl),
+               NaiveBayes=train(trainData, trainClasses, 
+                                method = "nb",
+                                metric = "ROC",
+                                tuneGrid = tuneGrids$nb,
+                                preProcess = c("knnImpute","center", "scale"), 
+                                trControl = ctrl),
+               LinearSVM=train(trainData, trainClasses, 
+                               method = "svmLinear",
+                               metric = "ROC",
+                               tuneGrid = tuneGrids$svm,
+                               preProcess = c("knnImpute","center", "scale"), 
+                               trControl = ctrl))
+
+t <- proc.time() - ptm
+print(sprintf("Ran %i Models in %.2f s", 
+              sum(sapply(tuneGrids, nrow))*10*5*3, t[3]))
+```
+
+Done! Let's have a look at the performance of the k-nearest neighbor on the cross-validation set. For that we just have to call the generic plot function on the training-structure in our list above.
+
+```{r, echo=TRUE, fig.width=8, fig.height=4}
+plot(models$knn)
+```
+
+As we can see, the performance increases with the number of neighbors defining the decision boundery, between our two classes. In case of k-NN, the larger the number of neighbors, the simpler the decision boundary between the classes. Such that, in the beginning the model is overfitting our training set and quickly performs better with a larger number of neighbors. If we would increase k even further, the performance would decrease again, as the model would start underfitting the training dataset. The best model over our parameter domain therefore is defined with 20 neighbors.
+
+```{r, echo=TRUE}
+models$knn$finalModel
+```
+
+If this model neither overfits nor underfits our training data, the performance on unseen data should not be much lower than on the cross validation set. So let's use the final models in our list to predict some new data and see how certain our model was in its predictions.
+
+```{r, echo=TRUE}
+knnPred        <- predict(models$knn, newdata = testData, type="prob")
+nbPred         <- predict(models$NaiveBayes, newdata = testData, type="prob")
+linearSVMPred  <- predict(models$LinearSVM, newdata = testData, type="prob")
+
+head(knnPred)
+```
+
+The predictions and class probabilities can be extracted from all models at once as well. Which makes it easier to compare the models among each other.
+
+```{r, echo=TRUE}
+pred     <- extractPrediction(models, testX = testData, testY = testClasses)
+predProb <- extractProb(models, testX = testData, testY = testClasses)
+
+head(pred)
+head(predProb)
+```
+
+Using the predictions on unseen data, the models can either be compared by their ROC curves,
+
+```{r, echo=TRUE, fig.width=8, fig.height=4}
+knnROC <- roc(predictor = knnPred$benign,
+              response = testClasses,
+              levels = rev(levels(testClasses)))
+nbROC <- roc(predictor = nbPred$benign,
+             response = testClasses,
+             levels = rev(levels(testClasses)))
+linearSVMROC <- roc(predictor = linearSVMPred$benign,
+                    response = testClasses,
+                    levels = rev(levels(testClasses)))
+
+plot(knnROC, type="S")
+plot(nbROC, add = TRUE, col = "red")
+plot(linearSVMROC, add = TRUE, col = "green")
+```
+
+or better by caret's resamples-method, which can be handed over to our summary method to get summary statistic over all model performances.
+
+```{r, echo=TRUE}
+cvValues <- resamples(models)
+summary(cvValues)
+```
+
+Of course this can be visualized easily again, either in form of a scatter plot matrix,
+
+```{r, echo=TRUE, fig.width=8, fig.height=4}
+splom(cvValues, metric = "ROC")
+```
+
+or a dot plot, where each of the AUC performances on the cross validation sets can be compared.
+
+```{r, fig.width=8, fig.height=4}
+dotplot(cvValues, metric = "ROC")
+```
+
+It looks like the linear kernel Support Vector Machine had a slightly better performance than all the other models. So what exactly was the performance on the training and test set in regard to all measures we can think of. Remember the extractPrediction method from above? The output of this method can directly be used to build a confusion matrix from our predictions, which should hold all information we could wish for.
+
+```{r}
+## Performance on the training set
+trainPerformance  <- subset(pred, dataType == "Training", model="svmLinear")
+confusionMatrix(trainPerformance$pred, trainPerformance$obs)
+```
+
+```{r, echo=TRUE}
+## Performance on the test set
+testPerformance  <- subset(pred, dataType == "Test", model="svmLinear")
+confusionMatrix(testPerformance$pred, testPerformance$obs)
+```
+
+This statistic might be interesting for estimating the degree of over- / underfitting, but which variables is our Support Vector Machine actually using for predicting breast cancer? This information might be critical for biomarker identification for this disease. The varImp method in caret might be exactly what you are searching for. It gives you the ranking of each feature used for classification.
+
+```{r, echo=TRUE}
+variableImportance <- varImp(models$LinearSVM)
+variableImportance
+```
+
+Looks like cell size and shape might be good predictors for Breast Cancer. At least those two were used most successfully to distinguish between our two classes (malignant, benign) in the linear SVM.
+
+And guess what...this can be visualized as well.
+
+```{r, echo=TRUE}
+plot(variableImportance)
+```
+
+Last but not least below I will add the session info to avoid reproducibility issues.
+
+```{r, echo=FALSE}
+sessionInfo()
+```
