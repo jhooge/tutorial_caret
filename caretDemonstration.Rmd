@@ -2,7 +2,7 @@
 title: "Evaluating Model Performance with Caret"
 author: "Jens Hooge"
 date: "23.7.2015"
-output: pdf_document
+output: html_document
 ---
 
 First we will load the required libraries including caret and a benchmark data set. In particular we will have a look at the Wisconsin Breast Cancer Database. Our goal will be to use the features in this dataset to classify benign and malignant breast cancer tumors.
@@ -101,12 +101,12 @@ models <- list(knn=train(trainData, trainClasses,
                          tuneGrid = tuneGrids$knn,
                          preProcess = c("knnImpute","center", "scale"), 
                          trControl = ctrl),
-               NaiveBayes=train(trainData, trainClasses, 
-                                method = "nb",
-                                metric = "ROC",
-                                tuneGrid = tuneGrids$nb,
-                                preProcess = c("knnImpute","center", "scale"), 
-                                trControl = ctrl),
+               # NaiveBayes=train(trainData, trainClasses, 
+               #                  method = "nb",
+               #                  metric = "ROC",
+               #                  tuneGrid = tuneGrids$nb,
+               #                  preProcess = c("knnImpute","center", "scale"), 
+               #                  trControl = ctrl),
                LinearSVM=train(trainData, trainClasses, 
                                method = "svmLinear",
                                metric = "ROC",
@@ -135,7 +135,7 @@ If this model neither overfits nor underfits our training data, the performance 
 
 ```{r, echo=TRUE}
 knnPred        <- predict(models$knn, newdata = testData, type="prob")
-nbPred         <- predict(models$NaiveBayes, newdata = testData, type="prob")
+# nbPred         <- predict(models$NaiveBayes, newdata = testData, type="prob")
 linearSVMPred  <- predict(models$LinearSVM, newdata = testData, type="prob")
 
 head(knnPred)
@@ -157,15 +157,15 @@ Using the predictions on unseen data, the models can either be compared by their
 knnROC <- roc(predictor = knnPred$benign,
               response = testClasses,
               levels = rev(levels(testClasses)))
-nbROC <- roc(predictor = nbPred$benign,
-             response = testClasses,
-             levels = rev(levels(testClasses)))
+# nbROC <- roc(predictor = nbPred$benign,
+#              response = testClasses,
+#              levels = rev(levels(testClasses)))
 linearSVMROC <- roc(predictor = linearSVMPred$benign,
                     response = testClasses,
                     levels = rev(levels(testClasses)))
 
 plot(knnROC, type="S")
-plot(nbROC, add = TRUE, col = "red")
+# plot(nbROC, add = TRUE, col = "red")
 plot(linearSVMROC, add = TRUE, col = "green")
 ```
 
